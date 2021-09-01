@@ -34,6 +34,6 @@ class Shell
      */
     public static function __callStatic(string $cmd, array $args): \Octris\Shell\Command
     {
-        return new \Octris\Shell\Command($cmd, $args);
+        return new \Octris\Shell\Command($cmd, ...$args);
     }
 }

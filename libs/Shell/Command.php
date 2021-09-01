@@ -37,11 +37,13 @@ class Command
 
     protected array $filter = [];
 
+    private static ?string $registered = null;
+
     protected static array $stream_specs = [
-        'default' => [ 'pipe', 'w+' ],
-        Shell::STDIN => [ 'pipe', 'r' ],
-        Shell::STDOUT => [ 'pipe', 'w' ],
-        Shell::STDOUT => [ 'pipe', 'w' ]
+        'default' => ['pipe', 'w+'],
+        Shell::STDIN => ['pipe', 'r'],
+        Shell::STDOUT => ['pipe', 'w'],
+        Shell::STDOUT => ['pipe', 'w']
     ];
 
     /**
@@ -60,10 +62,25 @@ class Command
         $this->cwd = getcwd();
     }
 
+    private static function registerStreamFilter(): string
+    {
+        if (is_null(self::$registered)) {
+            self::$registered = \Octris\Shell\StreamFilter::class;
+
+            if (!class_exists(self::$registered)) {
+                throw new \Exception('Class "' . self::$registered . ' not found."');
+            }
+
+            stream_filter_register(self::$registered, self::$registered);
+        }
+
+        return self::$registered;
+    }
+
     /**
      * Set defaults for a pipe.
      *
-     * @param   int                                 $fd             Fd of pipe to set defaults for.
+     * @param int $fd Fd of pipe to set defaults for.
      */
     protected function setDefaults(int $fd)
     {
@@ -127,8 +144,8 @@ class Command
     /**
      * Set pipe of specified type.
      *
-     * @param   int                                 $fd             Number of file-descriptor of pipe.
-     * @param   resource|\Octris\Shell\Command      $io_spec        I/O specification.
+     * @param int $fd Number of file-descriptor of pipe.
+     * @param resource|\Octris\Shell\Command $io_spec I/O specification.
      * @return  self
      */
     public function setPipe(int $fd, mixed $io_spec): self
@@ -136,23 +153,27 @@ class Command
         if ($io_spec instanceof self) {
             // chain commands
             $this->pipes[$fd] = [
-                'hash'   => spl_object_hash($io_spec),
+                'hash' => spl_object_hash($io_spec),
                 'object' => $io_spec,
-                'fh'     => $io_spec->usePipeFd(($fd == Shell::STDIN ? Shell::STDOUT : Shell::STDIN)),
-                'spec'   => (isset(self::$stream_specs[$fd])
-                                ? self::$stream_specs[$fd]
-                                : self::$stream_specs['default'])
+                'fh' => $io_spec->usePipeFd(($fd == Shell::STDIN ? Shell::STDOUT : Shell::STDIN)),
+                'spec' => (isset(self::$stream_specs[$fd])
+                    ? self::$stream_specs[$fd]
+                    : self::$stream_specs['default'])
             ];
+
+            $this->filter[$fd] = [];
         } elseif (is_resource($io_spec)) {
             // assign a stream resource to pipe
             $this->pipes[$fd] = [
-                'hash'   => null,
+                'hash' => null,
                 'object' => null,
-                'fh'     => $io_spec,
-                'spec'   => (isset(self::$stream_specs[$fd])
-                                ? self::$stream_specs[$fd]
-                                : self::$stream_specs['default'])
+                'fh' => $io_spec,
+                'spec' => (isset(self::$stream_specs[$fd])
+                    ? self::$stream_specs[$fd]
+                    : self::$stream_specs['default'])
             ];
+
+            $this->filter[$fd] = [];
         } else {
             throw new \InvalidArgumentException('$io_spec is neither a resource nor an instance of ' . __CLASS__);
         }
@@ -161,30 +182,71 @@ class Command
     }
 
     /**
-     * Add a streamfilter.
+     * Append a streamfilter.
      *
-     * @param   string                              $name
-     * @param   int                                 $fd             File-descriptor to add filter for.
-     * @param   callable                            $fn
+     * @param int $fd File-descriptor to add filter for.
+     * @param callable $fn
+     * @param int                                 &$id
      * @return  self
      */
-    public function appendStreamFilter(string $name, int $fd, callable $fn): self
+    public function appendStreamFilter(int $fd, callable $fn, mixed &$id = null): self
     {
-        if (isset($this->filter[$name])) {
-            throw new \InvalidArgumentException('A filter with the name "' . $name . '" already exists.');
+        if (!isset($this->filter[$fd])) {
+            throw new \RuntimeException('Pipe is not set for "' . $fd . '".');
         }
 
+        $type = ($fd == Shell::STDIN ? STREAM_FILTER_WRITE : STREAM_FILTER_READ);
 
-/*
-        $type = ($fd == 'STREAM_FILTER_READ
-        
-        $this->filter[$name] = function (mixed $stream, ) use ($fn) {
-
+        $this->filter[$fd][] = function (mixed $stream) use ($type, $fn) {
+            stream_filter_append($stream, self::registerStreamFilter(), $type, $fn);
         };
 
-        //stream_filter_append($stream, register(), $read_write, $callback);
+        $id = array_key_last($this->filter[$fd]);
 
-        return $this; */
+        return $this;
+    }
+
+    /**
+     * Prepend a streamfilter.
+     *
+     * @param int $fd File-descriptor to add filter for.
+     * @param callable $fn
+     * @param int                                 &$id
+     * @return  self
+     */
+    public function prependStreamFilter(int $fd, callable $fn, mixed &$id = null): self
+    {
+        $type = ($fd == Shell::STDIN ? STREAM_FILTER_WRITE : STREAM_FILTER_READ);
+
+        if (!isset($this->filter[$fd])) {
+            $this->filter[$fd] = [];
+        }
+
+        $this->filter[$fd][] = function (mixed $stream) use ($type, $fn) {
+            stream_filter_prepend($stream, self::registerStreamFilter(), $type, $fn);
+        };
+
+        $id = array_key_last($this->filter[$fd]);
+
+        return $this;
+    }
+
+    /**
+     * Remove streamfilter.
+     *
+     * @param int $fd
+     * @param int $id
+     * @return self
+     */
+    public function removeStreamFilter(int $fd, int $id): self
+    {
+        if (!isset($this->filter[$fd]) || !isset($this->filter[$fd][$id])) {
+            throw new \InvalidArgumentException('Streamfilter not defined for stream "' . $fd . '" and id "' . $id . '".');
+        }
+
+        unset($this->filter[$fd][$id]);
+
+        return $this;
     }
 
     /**
@@ -225,49 +287,44 @@ class Command
 
         $ph = proc_open($cmd, $specs, $pipes, $this->cwd, $this->env);
 
-        if (is_resource($ph)) {
-            $this->pid = proc_get_status($ph)['pid'];
+        if (!is_resource($ph)) {
+            throw new \Exception('error');
         }
 
-        $read_error = $read_output = true;
+        $this->pid = proc_get_status($ph)['pid'];
 
-        print "progress: ";
+        foreach ($pipes as $fd => $sh) {
+            foreach ($this->filter[$fd] as $fn) {
+                $fn($sh);
+            }
+        }
 
-        stream_set_blocking($pipes[1], false);
-        stream_set_blocking($pipes[2], false);
+        if ($read_output = (isset($pipes[Shell::STDOUT]) && is_resource($pipes[shell::STDOUT]))) {
+            stream_set_blocking($pipes[Shell::STDOUT], false);
+        }
+        if ($read_error = (isset($pipes[Shell::STDERR]) && is_resource($pipes[shell::STDERR]))) {
+            stream_set_blocking($pipes[Shell::STDERR], false);
+        }
 
-        // Dual reading of STDOUT and STDERR stops one full pipe blocking
-        // the other because the external script is waiting
         while ($read_error != false || $read_output != false) {
             if ($read_output != false) {
-                if (feof($pipes[1])) {
-                    fclose($pipes[1]);
+                if (feof($pipes[Shell::STDOUT])) {
+                    fclose($pipes[Shell::STDOUT]);
                     $read_output = false;
                 } else {
-                    // STDOUT line.
-                    // Check conditions here.
-                    $str = trim(fgets($pipes[1]));
-
-                    if (preg_match('/^Encoding: .+?([0-9]+(\.[0-9]+))\s*%/', $str, $match)) {
-                        print "\r" . str_repeat(' ', 50);
-                        print "\rprogress: " . $match[1] . "%";
-                    }
+                    fgets($pipes[Shell::STDOUT]);
                 }
             }
 
             if ($read_error != false) {
-                if (feof($pipes[2])) {
-                    fclose($pipes[2]);
+                if (feof($pipes[Shell::STDERR])) {
+                    fclose($pipes[Shell::STDERR]);
                     $read_error = false;
                 } else {
-                    // STDERR line.
-                    // Check conditions here.
-                    $str = trim(fgets($pipes[2]));
+                    fgets($pipes[Shell::STDERR]);
                 }
             }
         }
-
-        print "\rprogress: done." . str_repeat(' ', 20) . "\n";
 
         proc_close($ph);
     }
