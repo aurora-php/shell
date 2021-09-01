@@ -14,6 +14,7 @@ declare(strict_types=1);
 namespace Octris\Shell;
 
 use \Octris\Shell;
+use \Octris\Shell\StdStream;
 
 /**
  * Wrapper for proc_open.
@@ -52,7 +53,7 @@ class Command
      * @param string $cmd
      * @param array $args
      */
-    public function __construct(string $cmd, array $args)
+    public function __construct(string $cmd, array $args = [])
     {
         $this->cmd = escapeshellcmd($cmd);
         $this->args = array_map(function ($arg) {
@@ -82,9 +83,9 @@ class Command
      *
      * @param int $fd Fd of pipe to set defaults for.
      */
-    protected function setDefaults(int $fd)
+    protected function setDefaults(StdStream $fd)
     {
-        $this->pipes[$fd] = [
+        $this->pipes[$fd->value] = [
             'hash' => null,
             'object' => null,
             'fh' => null,
@@ -144,36 +145,32 @@ class Command
     /**
      * Set pipe of specified type.
      *
-     * @param int $fd Number of file-descriptor of pipe.
-     * @param resource|\Octris\Shell\Command $io_spec I/O specification.
+     * @param StdStream $fd Number of file-descriptor of pipe.
+     * @param resource|Command $io_spec I/O specification.
      * @return  self
      */
-    public function setPipe(int $fd, mixed $io_spec): self
+    public function setPipe(StdStream $fd, mixed $io_spec): self
     {
         if ($io_spec instanceof self) {
             // chain commands
-            $this->pipes[$fd] = [
+            $this->pipes[$fd->value] = [
                 'hash' => spl_object_hash($io_spec),
                 'object' => $io_spec,
-                'fh' => $io_spec->usePipeFd(($fd == Shell::STDIN ? Shell::STDOUT : Shell::STDIN)),
-                'spec' => (isset(self::$stream_specs[$fd])
-                    ? self::$stream_specs[$fd]
-                    : self::$stream_specs['default'])
+                'fh' => $io_spec->usePipeFd(($fd == StdStream::STDIN ? StdStream::STDOUT : StdStream::STDIN)),
+                'spec' => $fd->getDefault()
             ];
 
-            $this->filter[$fd] = [];
+            $this->filter[$fd->value] = [];
         } elseif (is_resource($io_spec)) {
             // assign a stream resource to pipe
-            $this->pipes[$fd] = [
+            $this->pipes[$fd->value] = [
                 'hash' => null,
                 'object' => null,
                 'fh' => $io_spec,
-                'spec' => (isset(self::$stream_specs[$fd])
-                    ? self::$stream_specs[$fd]
-                    : self::$stream_specs['default'])
+                'spec' => $fd->getDefault()
             ];
 
-            $this->filter[$fd] = [];
+            $this->filter[$fd->value] = [];
         } else {
             throw new \InvalidArgumentException('$io_spec is neither a resource nor an instance of ' . __CLASS__);
         }
@@ -184,24 +181,24 @@ class Command
     /**
      * Append a streamfilter.
      *
-     * @param int $fd File-descriptor to add filter for.
+     * @param StdStream $fd File-descriptor to add filter for.
      * @param callable $fn
      * @param int                                 &$id
      * @return  self
      */
-    public function appendStreamFilter(int $fd, callable $fn, mixed &$id = null): self
+    public function appendStreamFilter(StdStream $fd, callable $fn, mixed &$id = null): self
     {
-        if (!isset($this->filter[$fd])) {
-            throw new \RuntimeException('Pipe is not set for "' . $fd . '".');
+        if (!isset($this->filter[$fd->value])) {
+            throw new \RuntimeException('Unable to apply filter to undefined pipe "' . $fd->name . '".');
         }
 
-        $type = ($fd == Shell::STDIN ? STREAM_FILTER_WRITE : STREAM_FILTER_READ);
+        $type = ($fd == StdStream::STDIN ? STREAM_FILTER_WRITE : STREAM_FILTER_READ);
 
-        $this->filter[$fd][] = function (mixed $stream) use ($type, $fn) {
+        $this->filter[$fd->value][] = function (mixed $stream) use ($type, $fn) {
             stream_filter_append($stream, self::registerStreamFilter(), $type, $fn);
         };
 
-        $id = array_key_last($this->filter[$fd]);
+        $id = array_key_last($this->filter[$fd->value]);
 
         return $this;
     }
@@ -209,24 +206,28 @@ class Command
     /**
      * Prepend a streamfilter.
      *
-     * @param int $fd File-descriptor to add filter for.
+     * @param StdStream $fd File-descriptor to add filter for.
      * @param callable $fn
      * @param int                                 &$id
      * @return  self
      */
-    public function prependStreamFilter(int $fd, callable $fn, mixed &$id = null): self
+    public function prependStreamFilter(StdStream $fd, callable $fn, mixed &$id = null): self
     {
-        $type = ($fd == Shell::STDIN ? STREAM_FILTER_WRITE : STREAM_FILTER_READ);
-
-        if (!isset($this->filter[$fd])) {
-            $this->filter[$fd] = [];
+        if (!isset($this->filter[$fd->value])) {
+            throw new \RuntimeException('Unable to apply filter to undefined pipe "' . $fd->name . '".');
         }
 
-        $this->filter[$fd][] = function (mixed $stream) use ($type, $fn) {
+        $type = ($fd == StdStream::STDIN ? STREAM_FILTER_WRITE : STREAM_FILTER_READ);
+
+        if (!isset($this->filter[$fd->value])) {
+            $this->filter[$fd->value] = [];
+        }
+
+        $this->filter[$fd->value][] = function (mixed $stream) use ($type, $fn) {
             stream_filter_prepend($stream, self::registerStreamFilter(), $type, $fn);
         };
 
-        $id = array_key_last($this->filter[$fd]);
+        $id = array_key_last($this->filter[$fd->value]);
 
         return $this;
     }
@@ -234,17 +235,17 @@ class Command
     /**
      * Remove streamfilter.
      *
-     * @param int $fd
+     * @param StdStream $fd
      * @param int $id
      * @return self
      */
-    public function removeStreamFilter(int $fd, int $id): self
+    public function removeStreamFilter(StdStream $fd, int $id): self
     {
-        if (!isset($this->filter[$fd]) || !isset($this->filter[$fd][$id])) {
-            throw new \InvalidArgumentException('Streamfilter not defined for stream "' . $fd . '" and id "' . $id . '".');
+        if (!isset($this->filter[$fd->value]) || !isset($this->filter[$fd->value][$id])) {
+            throw new \InvalidArgumentException('Streamfilter not defined for stream "' . $fd->name . '" and id "' . $id . '".');
         }
 
-        unset($this->filter[$fd][$id]);
+        unset($this->filter[$fd->value][$id]);
 
         return $this;
     }
@@ -253,24 +254,23 @@ class Command
      * Returns file handle of a pipe and changes descriptor specification according to the usage
      * through a file handle.
      *
-     * @param   int                                 $fd             Number of file-descriptor to return.
+     * @param   StdStream                           $fd             Number of file-descriptor to return.
      * @return  resource                                            A Filedescriptor.
      */
-    public function usePipeFd(int $fd): mixed
+    public function usePipeFd(StdStream $fd): mixed
     {
-        if (!isset($this->pipes[$fd])) {
+        if (!isset($this->pipes[$fd->value])) {
             $this->setDefaults($fd);
         }
 
-        $this->pipes[$fd]['spec'] = (isset(self::$stream_specs[$fd])
-            ? self::$stream_specs[$fd]
-            : self::$stream_specs['default']);
+        $this->pipes[$fd->value]['spec'] = $fd->getDefault();
 
-        return $fh =& $this->pipes[$fd]['fh'];      /*
-                                                     * reference here means:
-                                                     * file handle can be changed within the class instance
-                                                     * but not outside the class instance
-                                                     */
+        return $fh =& $this->pipes[$fd->value]['fh'];
+                                /*
+                                 * reference here means:
+                                 * file handle can be changed within the class instance
+                                 * but not outside the class instance
+                                 */
     }
 
     /**
@@ -299,29 +299,29 @@ class Command
             }
         }
 
-        if ($read_output = (isset($pipes[Shell::STDOUT]) && is_resource($pipes[shell::STDOUT]))) {
-            stream_set_blocking($pipes[Shell::STDOUT], false);
+        if ($read_output = (isset($pipes[StdStream::STDOUT->value]) && is_resource($pipes[StdStream::STDOUT->value]))) {
+            stream_set_blocking($pipes[StdStream::STDOUT->value], false);
         }
-        if ($read_error = (isset($pipes[Shell::STDERR]) && is_resource($pipes[shell::STDERR]))) {
-            stream_set_blocking($pipes[Shell::STDERR], false);
+        if ($read_error = (isset($pipes[StdStream::STDERR->value]) && is_resource($pipes[StdStream::STDERR->value]))) {
+            stream_set_blocking($pipes[StdStream::STDERR->value], false);
         }
 
         while ($read_error != false || $read_output != false) {
             if ($read_output != false) {
-                if (feof($pipes[Shell::STDOUT])) {
-                    fclose($pipes[Shell::STDOUT]);
+                if (feof($pipes[StdStream::STDOUT->value])) {
+                    fclose($pipes[StdStream::STDOUT->value]);
                     $read_output = false;
                 } else {
-                    fgets($pipes[Shell::STDOUT]);
+                    fgets($pipes[StdStream::STDOUT->value]);
                 }
             }
 
             if ($read_error != false) {
-                if (feof($pipes[Shell::STDERR])) {
-                    fclose($pipes[Shell::STDERR]);
+                if (feof($pipes[StdStream::STDERR->value])) {
+                    fclose($pipes[StdStream::STDERR->value]);
                     $read_error = false;
                 } else {
-                    fgets($pipes[Shell::STDERR]);
+                    fgets($pipes[StdStream::STDERR->value]);
                 }
             }
         }
