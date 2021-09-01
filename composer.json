@@ -1,7 +1,7 @@
 {
     "name":         "octris/shell",
     "type":         "library",
-    "description":  "Library for executing shell commands",
+    "description":  "Library for executing shell commands, wrapper for proc_open.",
     "keywords":     [],
     "homepage":     "http://github.com/octris/shell/",
     "license":      "BSD-3-Clause",
