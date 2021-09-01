@@ -13,8 +13,8 @@ declare(strict_types=1);
 
 namespace Octris\Shell;
 
-use \Octris\Shell;
-use \Octris\Shell\StdStream;
+use Octris\Shell;
+use Octris\Shell\StdStream;
 
 /**
  * Wrapper for proc_open.
@@ -79,21 +79,6 @@ class Command
     }
 
     /**
-     * Set defaults for a pipe.
-     *
-     * @param int $fd Fd of pipe to set defaults for.
-     */
-    protected function setDefaults(StdStream $fd)
-    {
-        $this->pipes[$fd->value] = [
-            'hash' => null,
-            'object' => null,
-            'fh' => null,
-            'spec' => null
-        ];
-    }
-
-    /**
      * Set current working directory.
      *
      * @param string $path
@@ -153,6 +138,8 @@ class Command
     {
         if ($io_spec instanceof self) {
             // chain commands
+            var_dump([$fd, $fd == StdStream::STDIN, ($fd == StdStream::STDIN ? StdStream::STDOUT : StdStream::STDIN)]);
+
             $this->pipes[$fd->value] = [
                 'hash' => spl_object_hash($io_spec),
                 'object' => $io_spec,
@@ -257,20 +244,26 @@ class Command
      * @param   StdStream                           $fd             Number of file-descriptor to return.
      * @return  resource                                            A Filedescriptor.
      */
-    public function usePipeFd(StdStream $fd): mixed
+    private function usePipeFd(StdStream $fd): mixed
     {
-        if (!isset($this->pipes[$fd->value])) {
-            $this->setDefaults($fd);
-        }
 
-        $this->pipes[$fd->value]['spec'] = $fd->getDefault();
+        $this->pipes[$fd->value] = [
+            'hash' => null,
+            'object' => null,
+            'fh' => $fd->getStream(),
+            'spec' => $fd->getDefault()
+        ];
 
-        return $fh =& $this->pipes[$fd->value]['fh'];
-                                /*
-                                 * reference here means:
-                                 * file handle can be changed within the class instance
-                                 * but not outside the class instance
-                                 */
+        $fh =& $this->pipes[$fd->value]['fh'];
+            /*
+             * reference here means:
+             * file handle can be changed within the class instance
+             * but not outside the class instance
+             */
+
+        var_dump($fh);
+
+        return $fh;
     }
 
     /**

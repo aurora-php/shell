@@ -33,4 +33,13 @@ enum StdStream: int
             self::STDERR => ['pipe', 'w']
         };
     }
+
+    public function getStream(): mixed
+    {
+        return match($this) {
+            self::STDIN => STDIN,
+            self::STDOUT => STDOUT,
+            self::STDERR => STDERR
+        };
+    }
 }
