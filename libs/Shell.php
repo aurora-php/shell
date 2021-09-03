@@ -46,7 +46,7 @@ class Shell
      */
     public function exec()
     {
-        $chain = $this->cmd->getNested();
+        $chain = $this->cmd->getChain();
         $cnt = count($chain);
 
         $generators = [];
@@ -58,17 +58,15 @@ class Shell
         }
 
         while (count($generators) > 0) {
-            printf("loop children: %d\n", $cnt);
-
             $generators = array_filter($generators, function ($fn) {
-                if (!($is_active = ($fn->send('continue') === true))) {
-                    $fn->send('finish');
+                if (!($is_active = ($fn->send(true) === true))) {
+                    $fn->send(false);
                 };
 
                 return $is_active;
             });
 
-            sleep(1);
+            usleep(5000);
         }
 
 //        var_dump($children);

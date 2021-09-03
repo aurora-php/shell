@@ -151,7 +151,7 @@ class Command
      * Set pipe of specified type.
      *
      * @param StdStream $fd Number of file-descriptor of pipe.
-     * @param resource|Command $io_spec I/O specification.
+     * @param resource|Command|array $io_spec I/O specification.
      * @return  self
      */
     public function setPipe(StdStream $fd, mixed $io_spec): self
@@ -161,13 +161,6 @@ class Command
             if ($fd == StdStream::STDIN) {
                 throw new \InvalidArgumentException('Command chaining not allowed for STDIN');
             }
-
-     //       var_dump([$fd, $fd == StdStream::STDIN, ($fd == StdStream::STDIN ? StdStream::STDOUT : StdStream::STDIN)]);
-
-            /*$io_spec->descriptorspec[StdStream::STDIN->value] = [
-                'write' => function ($str) {},
-                'spec' => StdStream::STDIN->getDefault()
-            ];*/
 
             $io_spec->setPipe(StdStream::STDIN, StdStream::STDIN->getDefault());
 
@@ -197,7 +190,7 @@ class Command
 
             $this->filter[$fd->value] = [];
         } else {
-            throw new \InvalidArgumentException('$io_spec is neither a resource, an array nor an instance of ' . __CLASS__);
+            throw new \InvalidArgumentException('The second parameter must be a resource, an array or an instance of "' . __CLASS__ . '".');
         }
 
         return $this;
@@ -213,9 +206,9 @@ class Command
      */
     public function appendStreamFilter(StdStream $fd, callable $fn, mixed &$id = null): self
     {
-        /*if (!isset($this->filter[$fd->value])) {
+        if (!isset($this->filter[$fd->value])) {
             throw new \RuntimeException('Unable to apply filter to undefined pipe "' . $fd->name . '".');
-        }*/
+        }
 
         $type = ($fd == StdStream::STDIN ? STREAM_FILTER_WRITE : STREAM_FILTER_READ);
 
@@ -238,9 +231,9 @@ class Command
      */
     public function prependStreamFilter(StdStream $fd, callable $fn, mixed &$id = null): self
     {
-        /*if (!isset($this->filter[$fd->value])) {
+        if (!isset($this->filter[$fd->value])) {
             throw new \RuntimeException('Unable to apply filter to undefined pipe "' . $fd->name . '".');
-        }*/
+        }
 
         $type = ($fd == StdStream::STDIN ? STREAM_FILTER_WRITE : STREAM_FILTER_READ);
 
@@ -276,35 +269,17 @@ class Command
     }
 
     /**
-     * Returns file handle of a pipe and changes descriptor specification according to the usage
-     * through a file handle.
-     *
-     * @param   StdStream                           $fd             Number of file-descriptor to return.
-     * @param   resource                            $fh             Resource handler.
-     */
-    private function usePipeFd(StdStream $fd, mixed $fh)
-    {
-
-        $this->descriptorspec[$fd->value] = [
-            'hash' => null,
-            'object' => null,
-            'fh' => null,
-            'spec' => $fh
-        ];
-    }
-
-    /**
-     * Return nested commands.
+     * Return chained commands.
      *
      * @return array
      */
-    public function getNested(): array
+    public function getChain(): array
     {
-        $result = [ $this->cmd => $this ];
+        $result = [ $this ];
 
-        foreach ($this->descriptorspec as $fd => $spec) {
+        foreach ($this->descriptorspec as $spec) {
             if (isset($spec['chain'])) {
-                $result = [...$result, ...$spec['chain']->getNested()];
+                $result = [...$result, ...$spec['chain']->getChain()];
             }
         }
 
@@ -313,7 +288,7 @@ class Command
 
     private function dprint($msg)
     {
-        print $this->cmd . ' ' . $msg . "\n";
+        //print $this->cmd . ' ' . $msg . "\n";
     }
 
     /**
@@ -340,15 +315,7 @@ class Command
             }
 
             $this->pid = proc_get_status($this->ph)['pid'];
-            //var_dump([$this->cmd, $this->pipes, $this->filter]);
         }
-    }
-
-    private function write($str)
-    {
-        var_dump($this->pipes[StdStream::STDIN->value]);
-
-        fwrite($this->pipes[StdStream::STDIN->value], $str);
     }
 
     /**
@@ -403,16 +370,18 @@ class Command
             }
 
             $this->dprint("interrupt");
-            $break = (yield ($read_error != false || $read_output != false));
+            $cont = (yield ($read_error != false || $read_output != false));
             $this->dprint("continue");
 
-            /*if ($break) {
+            if (!$cont) {
                 break;
-            }*/
+            }
         }
 
         proc_close($this->ph);
 
         $this->dprint('done');
+
+        var_dump($this->pipes[StdStream::STDERR->value]);
     }
 }
