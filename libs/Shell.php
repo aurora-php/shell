@@ -68,7 +68,5 @@ class Shell
 
             usleep(5000);
         }
-
-//        var_dump($children);
     }
 }
