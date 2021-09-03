@@ -182,6 +182,12 @@ class Command
 
             $this->filter[$fd->value] = [];
         } elseif (is_array($io_spec) && array_is_list($io_spec)) {
+            $cnt = count($io_spec);
+
+            if (!in_array($io_spec[0], ['file', 'pipe']) || !in_array($io_spec[$cnt - 1], ['r', 'w']) || !(($io_spec[0] == 'file' && $cnt == 3) || ($io_spec[0] == 'pipe' && $cnt == 2))) {
+                throw new \InvalidArgumentException('Invalid spec type "[' . implode(', ', $io_spec) . ']".');
+            }
+
             $this->descriptorspec[$fd->value] = [
                 'write' => function ($str) {},
                 'close' => function () {},
@@ -190,7 +196,7 @@ class Command
 
             $this->filter[$fd->value] = [];
         } else {
-            throw new \InvalidArgumentException('The second parameter must be a resource, an array or an instance of "' . __CLASS__ . '".');
+            throw new \InvalidArgumentException('The second parameter must be a resource, an array spec or an instance of "' . __CLASS__ . '".');
         }
 
         return $this;
