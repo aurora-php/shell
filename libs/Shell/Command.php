@@ -173,7 +173,8 @@ class Command
 
             $this->descriptorspec[$fd->value] = [
                 'chain' => $io_spec,
-                'write' => [ $io_spec, 'write' ],
+                'write' => function ($str) use ($io_spec) { fwrite($io_spec->pipes[StdStream::STDIN->value], $str); },
+                'close' => function () use ($io_spec) { fclose($io_spec->pipes[StdStream::STDIN->value]); },
                 'spec' => $fd->getDefault()
             ];
 
@@ -181,16 +182,16 @@ class Command
         } elseif (is_resource($io_spec)) {
             // assign a stream resource to pipe
             $this->descriptorspec[$fd->value] = [
-                'write' => function ($str) {
-                },
+                'write' => function ($str) {},
+                'close' => function () {},
                 'spec' => $io_spec
             ];
 
             $this->filter[$fd->value] = [];
         } elseif (is_array($io_spec) && array_is_list($io_spec)) {
             $this->descriptorspec[$fd->value] = [
-                'write' => function ($str) {
-                },
+                'write' => function ($str) {},
+                'close' => function () {},
                 'spec' => $io_spec
             ];
 
@@ -381,6 +382,7 @@ class Command
                 if (feof($this->pipes[StdStream::STDOUT->value])) {
                     fclose($this->pipes[StdStream::STDOUT->value]);
                     $read_output = false;
+                    $this->descriptorspec[StdStream::STDOUT->value]['close']();
                 } else {
                     if (!is_bool($str = fgets($this->pipes[StdStream::STDOUT->value]))) {
                         $this->descriptorspec[StdStream::STDOUT->value]['write']($str);
@@ -392,6 +394,7 @@ class Command
                 if (feof($this->pipes[StdStream::STDERR->value])) {
                     fclose($this->pipes[StdStream::STDERR->value]);
                     $read_error = false;
+                    $this->descriptorspec[StdStream::STDERR->value]['close']();
                 } else {
                     if (!is_bool($str = fgets($this->pipes[StdStream::STDERR->value]))) {
                         $this->descriptorspec[StdStream::STDERR->value]['write']($str);
