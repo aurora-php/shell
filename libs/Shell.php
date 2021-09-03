@@ -46,15 +46,15 @@ class Shell
      */
     public function exec()
     {
-        $children = $this->cmd->getNested();
-        $cnt = count($children);
+        $chain = $this->cmd->getNested();
+        $cnt = count($chain);
 
         $generators = [];
 
-        foreach ($children as $child) {
-            $generators[] = $fn = $child->exec();
+        foreach ($chain as $item) {
+            $item->start();
 
-//            $fn->send('start');
+            $generators[] = $item->exec();
         }
 
         while (count($generators) > 0) {

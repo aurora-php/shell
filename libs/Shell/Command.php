@@ -34,9 +34,15 @@ class Command
 
     protected array $pipes = [];
 
+    protected array $descriptorspec = [];
+
+    protected $ph;
+
     protected ?int $pid = null;
 
     protected array $filter = [];
+
+    protected bool $running = false;
 
     private static ?string $registered = null;
 
@@ -60,6 +66,9 @@ class Command
             StdStream::STDOUT->value => [],
             StdStream::STDERR->value => [],
         ];
+
+        $this->setPipe(StdStream::STDOUT, StdStream::STDOUT->getDefault());
+        $this->setPipe(StdStream::STDERR, StdStream::STDERR->getDefault());
     }
 
     /**
@@ -153,28 +162,41 @@ class Command
                 throw new \InvalidArgumentException('Command chaining not allowed for STDIN');
             }
 
-            var_dump([$fd, $fd == StdStream::STDIN, ($fd == StdStream::STDIN ? StdStream::STDOUT : StdStream::STDIN)]);
+     //       var_dump([$fd, $fd == StdStream::STDIN, ($fd == StdStream::STDIN ? StdStream::STDOUT : StdStream::STDIN)]);
 
-            $this->pipes[$fd->value] = [
-                'hash' => spl_object_hash($io_spec),
-                'object' => $io_spec,
-                'fh' => $io_spec, //$io_spec->usePipeFd(($fd == StdStream::STDIN ? StdStream::STDOUT : StdStream::STDIN)),
+            /*$io_spec->descriptorspec[StdStream::STDIN->value] = [
+                'write' => function ($str) {},
+                'spec' => StdStream::STDIN->getDefault()
+            ];*/
+
+            $io_spec->setPipe(StdStream::STDIN, StdStream::STDIN->getDefault());
+
+            $this->descriptorspec[$fd->value] = [
+                'chain' => $io_spec,
+                'write' => [ $io_spec, 'write' ],
                 'spec' => $fd->getDefault()
             ];
 
             $this->filter[$fd->value] = [];
         } elseif (is_resource($io_spec)) {
             // assign a stream resource to pipe
-            $this->pipes[$fd->value] = [
-                'hash' => null,
-                'object' => null,
-                'fh' => $io_spec,
-                'spec' => $fd->getDefault()
+            $this->descriptorspec[$fd->value] = [
+                'write' => function ($str) {
+                },
+                'spec' => $io_spec
+            ];
+
+            $this->filter[$fd->value] = [];
+        } elseif (is_array($io_spec) && array_is_list($io_spec)) {
+            $this->descriptorspec[$fd->value] = [
+                'write' => function ($str) {
+                },
+                'spec' => $io_spec
             ];
 
             $this->filter[$fd->value] = [];
         } else {
-            throw new \InvalidArgumentException('$io_spec is neither a resource nor an instance of ' . __CLASS__);
+            throw new \InvalidArgumentException('$io_spec is neither a resource, an array nor an instance of ' . __CLASS__);
         }
 
         return $this;
@@ -190,9 +212,9 @@ class Command
      */
     public function appendStreamFilter(StdStream $fd, callable $fn, mixed &$id = null): self
     {
-        if (!isset($this->filter[$fd->value])) {
+        /*if (!isset($this->filter[$fd->value])) {
             throw new \RuntimeException('Unable to apply filter to undefined pipe "' . $fd->name . '".');
-        }
+        }*/
 
         $type = ($fd == StdStream::STDIN ? STREAM_FILTER_WRITE : STREAM_FILTER_READ);
 
@@ -215,9 +237,9 @@ class Command
      */
     public function prependStreamFilter(StdStream $fd, callable $fn, mixed &$id = null): self
     {
-        if (!isset($this->filter[$fd->value])) {
+        /*if (!isset($this->filter[$fd->value])) {
             throw new \RuntimeException('Unable to apply filter to undefined pipe "' . $fd->name . '".');
-        }
+        }*/
 
         $type = ($fd == StdStream::STDIN ? STREAM_FILTER_WRITE : STREAM_FILTER_READ);
 
@@ -262,7 +284,7 @@ class Command
     private function usePipeFd(StdStream $fd, mixed $fh)
     {
 
-        $this->pipes[$fd->value] = [
+        $this->descriptorspec[$fd->value] = [
             'hash' => null,
             'object' => null,
             'fh' => null,
@@ -279,9 +301,9 @@ class Command
     {
         $result = [ $this->cmd => $this ];
 
-        foreach ($this->pipes as $fd => $spec) {
-            if (is_object($spec['object'])) {
-                $result = [...$result, ...$spec['object']->getNested()];
+        foreach ($this->descriptorspec as $fd => $spec) {
+            if (isset($spec['chain'])) {
+                $result = [...$result, ...$spec['chain']->getNested()];
             }
         }
 
@@ -294,46 +316,60 @@ class Command
     }
 
     /**
+     * Start execution.
+     */
+    public function start()
+    {
+        if (!$this->running) {
+            $this->running = true;
+
+            $this->dprint("started");
+
+            $cmd = 'exec ' . $this->cmd . ' ' . implode(' ', $this->args);
+
+            $specs = array_map(function($p) {
+                return $p['spec'];
+            }, $this->descriptorspec);
+
+            $this->ph = proc_open($cmd, $specs, $this->pipes, $this->cwd, $this->env);
+            $this->dprint('proc_open');
+
+            if (!is_resource($this->ph)) {
+                throw new \Exception('error');
+            }
+
+            $this->pid = proc_get_status($this->ph)['pid'];
+            //var_dump([$this->cmd, $this->pipes, $this->filter]);
+        }
+    }
+
+    private function write($str)
+    {
+        var_dump($this->pipes[StdStream::STDIN->value]);
+
+        fwrite($this->pipes[StdStream::STDIN->value], $str);
+    }
+
+    /**
      * Execute command.
      */
     public function exec()
     {
-        $this->dprint("started");
-
-        $pipes = [];
-        $cmd = 'exec ' . $this->cmd . ' ' . implode(' ', $this->args);
-
-        $specs = array_map(function($p) {
-            return $p['spec'];
-        }, $this->pipes);
-
-        $ph = proc_open($cmd, $specs, $pipes, $this->cwd, $this->env);
-        $this->dprint('proc_open');
-
-        if (!is_resource($ph)) {
-            throw new \Exception('error');
+        if (!$this->running) {
+            return;
         }
 
-        $this->pid = proc_get_status($ph)['pid'];
-        //var_dump([$this->cmd, $pipes, $this->filter]);
-
-        array_walk($this->pipes, function($p, $k) use ($pipes) {
-            if (is_object($p['fh'])) {
-                $p['fh']->usePipeFd(StdStream::STDIN, $pipes[$k]);
-            }
-        });
-
-        foreach ($pipes as $fd => $sh) {
+        foreach ($this->pipes as $fd => $sh) {
             foreach ($this->filter[$fd] as $fn) {
                 $fn($sh);
             }
         }
 
-        if ($read_output = (isset($pipes[StdStream::STDOUT->value]) && is_resource($pipes[StdStream::STDOUT->value]))) {
-            stream_set_blocking($pipes[StdStream::STDOUT->value], false);
+        if ($read_output = (isset($this->pipes[StdStream::STDOUT->value]) && is_resource($this->pipes[StdStream::STDOUT->value]))) {
+            stream_set_blocking($this->pipes[StdStream::STDOUT->value], false);
         }
-        if ($read_error = (isset($pipes[StdStream::STDERR->value]) && is_resource($pipes[StdStream::STDERR->value]))) {
-            stream_set_blocking($pipes[StdStream::STDERR->value], false);
+        if ($read_error = (isset($this->pipes[StdStream::STDERR->value]) && is_resource($this->pipes[StdStream::STDERR->value]))) {
+            stream_set_blocking($this->pipes[StdStream::STDERR->value], false);
         }
 
         if ($read_error === false && $read_output === false) {
@@ -342,20 +378,24 @@ class Command
 
         while ($read_error != false || $read_output != false) {
             if ($read_output != false) {
-                if (feof($pipes[StdStream::STDOUT->value])) {
-                    fclose($pipes[StdStream::STDOUT->value]);
+                if (feof($this->pipes[StdStream::STDOUT->value])) {
+                    fclose($this->pipes[StdStream::STDOUT->value]);
                     $read_output = false;
                 } else {
-                    fgets($pipes[StdStream::STDOUT->value]);
+                    if (!is_bool($str = fgets($this->pipes[StdStream::STDOUT->value]))) {
+                        $this->descriptorspec[StdStream::STDOUT->value]['write']($str);
+                    }
                 }
             }
 
             if ($read_error != false) {
-                if (feof($pipes[StdStream::STDERR->value])) {
-                    fclose($pipes[StdStream::STDERR->value]);
+                if (feof($this->pipes[StdStream::STDERR->value])) {
+                    fclose($this->pipes[StdStream::STDERR->value]);
                     $read_error = false;
                 } else {
-                    fgets($pipes[StdStream::STDERR->value]);
+                    if (!is_bool($str = fgets($this->pipes[StdStream::STDERR->value]))) {
+                        $this->descriptorspec[StdStream::STDERR->value]['write']($str);
+                    }
                 }
             }
 
@@ -368,7 +408,7 @@ class Command
             }*/
         }
 
-        proc_close($ph);
+        proc_close($this->ph);
 
         $this->dprint('done');
     }
