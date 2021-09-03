@@ -13,6 +13,8 @@ declare(strict_types=1);
 
 namespace Octris;
 
+use \Octris\Shell\Command;
+
 /**
  * Create command.
  *
@@ -21,19 +23,54 @@ namespace Octris;
  */
 class Shell
 {
-    const STDIN = 0;
-    const STDOUT = 1;
-    const STDERR = 2;
+    /**
+     * Constructor.
+     */
+    protected function __construct(private Command $cmd)
+    {
+    }
 
     /**
-     * Create command instance.
+     * Create command.
      *
-     * @param string $cmd
-     * @param array $args
-     * @return \Octris\Shell\Command
+     * @param Command $cmd
+     * @return self
      */
-    public static function __callStatic(string $cmd, array $args): \Octris\Shell\Command
+    public static function create(Command $cmd): self
     {
-        return new \Octris\Shell\Command($cmd, ...$args);
+        return new static($cmd);
+    }
+
+    /**
+     * Execute command.
+     */
+    public function exec()
+    {
+        $children = $this->cmd->getNested();
+        $cnt = count($children);
+
+        $generators = [];
+
+        foreach ($children as $child) {
+            $generators[] = $fn = $child->exec();
+
+//            $fn->send('start');
+        }
+
+        while (count($generators) > 0) {
+            printf("loop children: %d\n", $cnt);
+
+            $generators = array_filter($generators, function ($fn) {
+                if (!($is_active = ($fn->send('continue') === true))) {
+                    $fn->send('finish');
+                };
+
+                return $is_active;
+            });
+
+            sleep(1);
+        }
+
+//        var_dump($children);
     }
 }

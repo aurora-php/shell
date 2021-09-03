@@ -40,13 +40,6 @@ class Command
 
     private static ?string $registered = null;
 
-    protected static array $stream_specs = [
-        'default' => ['pipe', 'w+'],
-        Shell::STDIN => ['pipe', 'r'],
-        Shell::STDOUT => ['pipe', 'w'],
-        Shell::STDOUT => ['pipe', 'w']
-    ];
-
     /**
      * Constructor.
      *
@@ -61,6 +54,24 @@ class Command
         }, $args);
 
         $this->cwd = getcwd();
+
+        $this->filter = [
+            StdStream::STDIN->value => [],
+            StdStream::STDOUT->value => [],
+            StdStream::STDERR->value => [],
+        ];
+    }
+
+    /**
+     * Create command.
+     *
+     * @param string $cmd
+     * @param array $args
+     * @return \Octris\Shell\Command
+     */
+    public static function __callStatic(string $cmd, array $args): self
+    {
+        return new static($cmd, ...$args);
     }
 
     private static function registerStreamFilter(): string
@@ -138,12 +149,16 @@ class Command
     {
         if ($io_spec instanceof self) {
             // chain commands
+            if ($fd == StdStream::STDIN) {
+                throw new \InvalidArgumentException('Command chaining not allowed for STDIN');
+            }
+
             var_dump([$fd, $fd == StdStream::STDIN, ($fd == StdStream::STDIN ? StdStream::STDOUT : StdStream::STDIN)]);
 
             $this->pipes[$fd->value] = [
                 'hash' => spl_object_hash($io_spec),
                 'object' => $io_spec,
-                'fh' => $io_spec->usePipeFd(($fd == StdStream::STDIN ? StdStream::STDOUT : StdStream::STDIN)),
+                'fh' => $io_spec, //$io_spec->usePipeFd(($fd == StdStream::STDIN ? StdStream::STDOUT : StdStream::STDIN)),
                 'spec' => $fd->getDefault()
             ];
 
@@ -242,28 +257,40 @@ class Command
      * through a file handle.
      *
      * @param   StdStream                           $fd             Number of file-descriptor to return.
-     * @return  resource                                            A Filedescriptor.
+     * @param   resource                            $fh             Resource handler.
      */
-    private function usePipeFd(StdStream $fd): mixed
+    private function usePipeFd(StdStream $fd, mixed $fh)
     {
 
         $this->pipes[$fd->value] = [
             'hash' => null,
             'object' => null,
-            'fh' => $fd->getStream(),
-            'spec' => $fd->getDefault()
+            'fh' => null,
+            'spec' => $fh
         ];
+    }
 
-        $fh =& $this->pipes[$fd->value]['fh'];
-            /*
-             * reference here means:
-             * file handle can be changed within the class instance
-             * but not outside the class instance
-             */
+    /**
+     * Return nested commands.
+     *
+     * @return array
+     */
+    public function getNested(): array
+    {
+        $result = [ $this->cmd => $this ];
 
-        var_dump($fh);
+        foreach ($this->pipes as $fd => $spec) {
+            if (is_object($spec['object'])) {
+                $result = [...$result, ...$spec['object']->getNested()];
+            }
+        }
 
-        return $fh;
+        return $result;
+    }
+
+    private function dprint($msg)
+    {
+        print $this->cmd . ' ' . $msg . "\n";
     }
 
     /**
@@ -271,6 +298,8 @@ class Command
      */
     public function exec()
     {
+        $this->dprint("started");
+
         $pipes = [];
         $cmd = 'exec ' . $this->cmd . ' ' . implode(' ', $this->args);
 
@@ -279,12 +308,20 @@ class Command
         }, $this->pipes);
 
         $ph = proc_open($cmd, $specs, $pipes, $this->cwd, $this->env);
+        $this->dprint('proc_open');
 
         if (!is_resource($ph)) {
             throw new \Exception('error');
         }
 
         $this->pid = proc_get_status($ph)['pid'];
+        //var_dump([$this->cmd, $pipes, $this->filter]);
+
+        array_walk($this->pipes, function($p, $k) use ($pipes) {
+            if (is_object($p['fh'])) {
+                $p['fh']->usePipeFd(StdStream::STDIN, $pipes[$k]);
+            }
+        });
 
         foreach ($pipes as $fd => $sh) {
             foreach ($this->filter[$fd] as $fn) {
@@ -297,6 +334,10 @@ class Command
         }
         if ($read_error = (isset($pipes[StdStream::STDERR->value]) && is_resource($pipes[StdStream::STDERR->value]))) {
             stream_set_blocking($pipes[StdStream::STDERR->value], false);
+        }
+
+        if ($read_error === false && $read_output === false) {
+            yield false;
         }
 
         while ($read_error != false || $read_output != false) {
@@ -317,8 +358,18 @@ class Command
                     fgets($pipes[StdStream::STDERR->value]);
                 }
             }
+
+            $this->dprint("interrupt");
+            $break = (yield ($read_error != false || $read_output != false));
+            $this->dprint("continue");
+
+            /*if ($break) {
+                break;
+            }*/
         }
 
         proc_close($ph);
+
+        $this->dprint('done');
     }
 }
