@@ -52,9 +52,9 @@ class Shell
         $generators = [];
 
         foreach ($chain as $item) {
-            $item->start();
+            $generators[] = $gen = $item->exec();
 
-            $generators[] = $item->exec();
+            $gen->send(true);
         }
 
         while (count($generators) > 0) {

@@ -36,13 +36,9 @@ class Command
 
     protected array $descriptorspec = [];
 
-    protected $ph;
-
     protected ?int $pid = null;
 
     protected array $filter = [];
-
-    protected bool $running = false;
 
     private static ?string $registered = null;
 
@@ -298,40 +294,32 @@ class Command
     }
 
     /**
-     * Start execution.
-     */
-    public function start()
-    {
-        if (!$this->running) {
-            $this->running = true;
-
-            $this->dprint("started");
-
-            $cmd = 'exec ' . $this->cmd . ' ' . implode(' ', $this->args);
-
-            $specs = array_map(function($p) {
-                return $p['spec'];
-            }, $this->descriptorspec);
-
-            $this->ph = proc_open($cmd, $specs, $this->pipes, $this->cwd, $this->env);
-            $this->dprint('proc_open');
-
-            if (!is_resource($this->ph)) {
-                throw new \Exception('error');
-            }
-
-            $this->pid = proc_get_status($this->ph)['pid'];
-        }
-    }
-
-    /**
      * Execute command.
      */
     public function exec()
     {
-        if (!$this->running) {
-            return;
+        yield;
+
+        $this->running = true;
+
+        $this->dprint("started");
+
+        $cmd = 'exec ' . $this->cmd . ' ' . implode(' ', $this->args);
+
+        $specs = array_map(function($p) {
+            return $p['spec'];
+        }, $this->descriptorspec);
+
+        $ph = proc_open($cmd, $specs, $this->pipes, $this->cwd, $this->env);
+        $this->dprint('proc_open');
+
+        if (!is_resource($ph)) {
+            throw new \Exception('error');
         }
+
+        $this->pid = proc_get_status($ph)['pid'];
+
+        yield;
 
         foreach ($this->pipes as $fd => $sh) {
             foreach ($this->filter[$fd] as $fn) {
@@ -384,10 +372,8 @@ class Command
             }
         }
 
-        proc_close($this->ph);
+        proc_close($ph);
 
         $this->dprint('done');
-
-        var_dump($this->pipes[StdStream::STDERR->value]);
     }
 }
