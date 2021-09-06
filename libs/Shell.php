@@ -47,7 +47,6 @@ class Shell
     public function exec()
     {
         $chain = $this->cmd->getChain();
-        $cnt = count($chain);
 
         $generators = [];
 

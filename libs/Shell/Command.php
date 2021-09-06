@@ -271,7 +271,7 @@ class Command
     }
 
     /**
-     * Return chained commands.
+     * Return command chain.
      *
      * @return array
      */
@@ -288,21 +288,16 @@ class Command
         return $result;
     }
 
-    private function dprint($msg)
-    {
-        //print $this->cmd . ' ' . $msg . "\n";
-    }
-
     /**
      * Execute command.
+     *
+     * @return \Generator
      */
     public function exec()
     {
         yield;
 
         $this->running = true;
-
-        $this->dprint("started");
 
         $cmd = 'exec ' . $this->cmd . ' ' . implode(' ', $this->args);
 
@@ -311,7 +306,6 @@ class Command
         }, $this->descriptorspec);
 
         $ph = proc_open($cmd, $specs, $this->pipes, $this->cwd, $this->env);
-        $this->dprint('proc_open');
 
         if (!is_resource($ph)) {
             throw new \Exception('error');
@@ -363,9 +357,7 @@ class Command
                 }
             }
 
-            $this->dprint("interrupt");
             $cont = (yield ($read_error != false || $read_output != false));
-            $this->dprint("continue");
 
             if (!$cont) {
                 break;
@@ -373,7 +365,5 @@ class Command
         }
 
         proc_close($ph);
-
-        $this->dprint('done');
     }
 }
