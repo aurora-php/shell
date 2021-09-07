@@ -42,6 +42,22 @@ class Shell
     }
 
     /**
+     * Test if a command exists, returns path of command or an empty string.
+     *
+     * @param string $command
+     * @param int &$exit_code
+     * @return string
+     */
+    public static function which(string $command, ?int &$exit_code = null)
+    {
+        $output = [];
+
+        $return = exec('which ' . escapeshellarg($command) . ' 2>/dev/null', $output, $exit_code);
+
+        return ($return === false ? '' : $return);
+    }
+
+    /**
      * Execute command.
      */
     public function exec()
