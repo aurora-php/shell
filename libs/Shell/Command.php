@@ -40,7 +40,7 @@ class Command
 
     protected array $filter = [];
 
-    private static ?string $registered = null;
+    private static array $stream_filter_registry = [];
 
     /**
      * Constructor.
@@ -79,19 +79,19 @@ class Command
         return new static($cmd, ...$args);
     }
 
-    private static function registerStreamFilter(): string
+    private static function registerStreamFilter(string $class): string
     {
-        if (is_null(self::$registered)) {
-            self::$registered = \Octris\Shell\StreamFilter::class;
+        if (!isset(self::$stream_filter_registry[$class])) {
+            self::$stream_filter_registry[$class] = true;
 
-            if (!class_exists(self::$registered)) {
-                throw new \Exception('Class "' . self::$registered . ' not found."');
+            if (!class_exists($class)) {
+                throw new \Exception('Class "' . $class . ' not found."');
             }
 
-            stream_filter_register(self::$registered, self::$registered);
+            stream_filter_register($class, $class);
         }
 
-        return self::$registered;
+        return $class;
     }
 
     /**
@@ -201,12 +201,13 @@ class Command
     /**
      * Append a streamfilter.
      *
-     * @param StdStream $fd File-descriptor to add filter for.
-     * @param callable $fn
-     * @param int                                 &$id
+     * @param StdStream $fd     File-descriptor to add filter for.
+     * @param string $class     Name of class of filter.
+     * @param mixed $params     Parameters for filter.
+     * @param int|null &$id     Id of filter.
      * @return  self
      */
-    public function appendStreamFilter(StdStream $fd, callable $fn, mixed &$id = null): self
+    public function appendStreamFilter(StdStream $fd, string $class, mixed $params, int &$id = null): self
     {
         if (!isset($this->filter[$fd->value])) {
             throw new \RuntimeException('Unable to apply filter to undefined pipe "' . $fd->name . '".');
@@ -214,8 +215,8 @@ class Command
 
         $type = ($fd == StdStream::STDIN ? STREAM_FILTER_WRITE : STREAM_FILTER_READ);
 
-        $this->filter[$fd->value][] = function (mixed $stream) use ($type, $fn) {
-            stream_filter_append($stream, self::registerStreamFilter(), $type, $fn);
+        $this->filter[$fd->value][] = function (mixed $stream) use ($class, $type, $params) {
+            stream_filter_append($stream, self::registerStreamFilter($class), $type, $params);
         };
 
         $id = array_key_last($this->filter[$fd->value]);
@@ -226,12 +227,13 @@ class Command
     /**
      * Prepend a streamfilter.
      *
-     * @param StdStream $fd File-descriptor to add filter for.
-     * @param callable $fn
-     * @param int                                 &$id
+     * @param StdStream $fd     File-descriptor to add filter for.
+     * @param string $class     Name of class of filter.
+     * @param mixed $params     Parameters for filter.
+     * @param int|null &$id     Id of filter.
      * @return  self
      */
-    public function prependStreamFilter(StdStream $fd, callable $fn, mixed &$id = null): self
+    public function prependStreamFilter(StdStream $fd, string $class, mixed $params, int &$id = null): self
     {
         if (!isset($this->filter[$fd->value])) {
             throw new \RuntimeException('Unable to apply filter to undefined pipe "' . $fd->name . '".');
@@ -243,8 +245,8 @@ class Command
             $this->filter[$fd->value] = [];
         }
 
-        $this->filter[$fd->value][] = function (mixed $stream) use ($type, $fn) {
-            stream_filter_prepend($stream, self::registerStreamFilter(), $type, $fn);
+        $this->filter[$fd->value][] = function (mixed $stream) use ($class, $type, $params) {
+            stream_filter_prepend($stream, self::registerStreamFilter($class), $type, $params);
         };
 
         $id = array_key_last($this->filter[$fd->value]);
