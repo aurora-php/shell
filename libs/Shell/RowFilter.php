@@ -36,6 +36,7 @@ class RowFilter extends \php_user_filter
     {
         $this->is_closed = false;
         $this->supports_close = ((new \ReflectionFunction($this->params))->getNumberOfRequiredParameters() === 0);
+        $this->row = '';
 
         return true;
     }
