@@ -19,7 +19,7 @@ namespace Octris\Shell;
  * @copyright   copyright (c) 2021-present by Harald Lapp
  * @author      Harald Lapp <harald@octris.org>
  */
-class StreamFilter extends \php_user_filter
+class ChunkFilter extends \php_user_filter
 {
     private bool $supports_close = false;
 
