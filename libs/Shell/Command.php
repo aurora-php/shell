@@ -42,6 +42,8 @@ class Command
 
     private static array $stream_filter_registry = [];
 
+    protected ?int $exit_code = null;
+
     /**
      * Constructor.
      *
@@ -291,6 +293,16 @@ class Command
     }
 
     /**
+     * Return exit code.
+     *
+     * @return ?int
+     */
+    public function getExitCode(): ?int
+    {
+        return $this->exit_code;
+    }
+
+    /**
      * Execute command.
      *
      * @return \Generator
@@ -299,7 +311,7 @@ class Command
     {
         yield;
 
-        $this->running = true;
+        $this->exit_code = null;
 
         $cmd = 'exec ' . $this->cmd . ' ' . implode(' ', $this->args);
 
@@ -364,6 +376,12 @@ class Command
             if (!$cont) {
                 break;
             }
+        }
+
+        $status = proc_get_status($ph);
+
+        if ($status['running'] === false && $this->exit_code === null) {
+            $this->exit_code = $status['exitcode'];
         }
 
         proc_close($ph);
