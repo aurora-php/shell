@@ -136,6 +136,10 @@ class Command
      */
     public function setArgs(array $args, bool $merge = true): self
     {
+        $args = array_map(function ($arg) {
+            return escapeshellarg($arg);
+        }, $args);
+
         if ($merge) {
             $this->args = array_merge($this->args, $args);
         } else {
